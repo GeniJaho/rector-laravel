@@ -16,6 +16,8 @@ use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Expression;
 use PhpParser\Node\Stmt\Namespace_;
+use PHPStan\Analyser\Scope;
+use Rector\NodeTypeResolver\Node\AttributeKey;
 use Rector\PhpParser\Node\CustomNode\FileWithoutNamespace;
 use Rector\Rector\AbstractRector;
 use RectorLaravel\NodeFactory\ModelFactoryNodeFactory;
@@ -120,6 +122,17 @@ CODE_SAMPLE
 
         if ($factories === []) {
             return null;
+        }
+
+        if ($node instanceof FileWithoutNamespace) {
+            $scope = $node->getAttribute(AttributeKey::SCOPE);
+            $namespaceName = $scope instanceof Scope ? $scope->getNamespace() : null;
+var_dump($scope);die;
+            if ($namespaceName === null) {
+                return null;
+            }
+
+            $node->stmts = array_merge([new Namespace_(new Name($namespaceName))], $node->stmts);
         }
 
         $node->stmts = array_merge($node->stmts, $factories);
