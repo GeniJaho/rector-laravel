@@ -8,6 +8,8 @@ use PhpParser\Node;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\PropertyFetch;
+use PhpParser\Node\Scalar\Encapsed;
+use PHPStan\PhpDocParser\Ast\NodeTraverser;
 use PHPStan\Reflection\ClassReflection;
 use Rector\Rector\AbstractRector;
 use Rector\Reflection\ReflectionResolver;
@@ -20,7 +22,7 @@ use Symplify\RuleDocGenerator\ValueObject\RuleDefinition;
 final class ReplaceFakerInstanceWithHelperRector extends AbstractRector
 {
     public function __construct(
-        private readonly ReflectionResolver $reflectionResolver
+        private readonly ReflectionResolver $reflectionResolver,
     ) {
     }
 
@@ -65,11 +67,11 @@ CODE_SAMPLE
      */
     public function getNodeTypes(): array
     {
-        return [PropertyFetch::class, MethodCall::class];
+        return [Node\Expr\Array_::class];
     }
 
     /**
-     * @param  PropertyFetch|MethodCall  $node
+     * @param  Node\Expr\Array_  $node
      */
     public function refactor(Node $node): ?Node
     {
@@ -83,25 +85,50 @@ CODE_SAMPLE
             return null;
         }
 
-        if ($node instanceof MethodCall) {
-            if (! $node->var instanceof PropertyFetch) {
+        $hasChanged = false;
+
+        $this->traverseNodesWithCallable($node->items ?? [], function (Node $subNode) use (&$hasChanged): ?int {
+            if ($subNode instanceof Encapsed) {
+                return NodeTraverser::DONT_TRAVERSE_CURRENT_AND_CHILDREN;
+            }
+
+            if ($subNode instanceof MethodCall) {
+                $result = $this->refactorMethodCall($subNode);
+                if ($result !== null) {
+                    $hasChanged = true;
+                }
+
                 return null;
             }
 
-            // The randomEnum() method is a special case where the faker instance is used
-            // see https://github.com/spatie/laravel-enum#faker-provider
-            if ($this->isName($node->name, 'randomEnum')) {
-                return null;
+            if ($subNode instanceof PropertyFetch && $subNode->var instanceof PropertyFetch) {
+                $result = $this->refactorPropertyFetch($subNode);
+                if ($result !== null) {
+                    $hasChanged = true;
+                }
             }
 
-            return $this->refactorPropertyFetch($node);
+            return null;
+        });
+
+        return $hasChanged
+            ? $node
+            : null;
+    }
+
+    private function refactorMethodCall(MethodCall $methodCall): PropertyFetch|MethodCall|null
+    {
+        if (! $methodCall->var instanceof PropertyFetch) {
+            return null;
         }
 
-        if ($node->var instanceof PropertyFetch) {
-            return $this->refactorPropertyFetch($node);
+        // The randomEnum() method is a special case where the faker instance is used
+        // see https://github.com/spatie/laravel-enum#faker-provider
+        if ($this->isName($methodCall->name, 'randomEnum')) {
+            return null;
         }
 
-        return null;
+        return $this->refactorPropertyFetch($methodCall);
     }
 
     private function refactorPropertyFetch(MethodCall|PropertyFetch $node): MethodCall|PropertyFetch|null
